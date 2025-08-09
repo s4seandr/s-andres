@@ -3,7 +3,7 @@ const { runQuery, getQuery } = require('../models/database');
 const router = express.Router();
 
 // Das Passwort aus deiner Frontend-Komponente
-const SURVEY_PASSWORD = process.env.SURVEY_PASSWORD || "meinGeheimesPasswort";
+const SURVEY_PASSWORD = process.env.SURVEY_PASSWORD || "WhiskyTasting123!";
 
 // POST /api/auth/login - Benutzer anmelden
 router.post('/login', async (req, res) => {
