@@ -1,235 +1,186 @@
 const express = require('express');
-const { runQuery, getQuery, allQuery } = require('../models/database');
+const multer = require("multer");
+const path = require("path");
+const crypto = require("crypto");
+
 const router = express.Router();
 
-// ADMIN PASSWORD - Für zusätzliche Sicherheit
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
+// Datenbank-Funktionen importieren
+const database = require('../models/database');
 
-// Middleware für Admin-Authentifizierung
-const adminAuth = (req, res, next) => {
-    const { adminpassword } = req.headers;
+// Speicherort und Dateiname für hochgeladene Bilder
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, path.join(__dirname, "../public/images"));
+    },
+    filename: (req, file, cb) => {
+        // Filename wird später basierend auf Whisky-Name gesetzt
+        // Hier verwenden wir erstmal einen temporären Namen
+        const tempName = `temp_${Date.now()}${path.extname(file.originalname)}`;
+        cb(null, tempName);
+    },
+});
+const upload = multer({ storage });
 
-    if (adminpassword !== ADMIN_PASSWORD) {
-        return res.status(401).json({ error: 'Admin-Passwort erforderlich' });
+// Einfacher In-Memory Token-Speicher (später besser mit DB/JWT)
+let validTokens = [];
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "geheim";
+
+// Middleware: prüft ob Token gültig ist
+function tokenAuth(req, res, next) {
+    const token = req.headers["authorization"];
+    if (!token || !validTokens.includes(token)) {
+        return res.status(401).json({ error: "Nicht autorisiert" });
     }
     next();
-};
+}
 
-// =============================================================================
-// WHISKY MANAGEMENT
-// =============================================================================
+// =======================
+// LOGIN
+// =======================
+router.post("/login", (req, res) => {
+    const { password } = req.body;
+    if (password === ADMIN_PASSWORD) {
+        const token = crypto.randomBytes(32).toString("hex");
+        validTokens.push(token);
+        console.log("✅ Admin Login erfolgreich");
+        return res.json({ token });
+    }
+    console.log("❌ Admin Login fehlgeschlagen");
+    res.status(401).json({ error: "Falsches Passwort" });
+});
 
-// GET /api/admin/whiskys - Alle Whiskys mit Details
-router.get('/whiskys', adminAuth, async (req, res) => {
+// =======================
+// WHISKY CRUD mit Datenbankanbindung
+// =======================
+
+// Alle Whiskys abrufen (geschützt)
+router.get("/whiskys", tokenAuth, async (req, res) => {
     try {
-        const whiskys = await allQuery(`
-            SELECT 
-                w.*,
-                COUNT(sr.id) as survey_count,
-                AVG(sr.bewertung) as avg_rating
-            FROM whiskys w
-            LEFT JOIN survey_responses sr ON w.id = sr.whisky_id
-            GROUP BY w.id
-            ORDER BY w.id
-        `);
-
+        console.log("📋 Lade Whiskys aus Datenbank...");
+        const whiskys = await database.allQuery('SELECT * FROM whiskys ORDER BY id DESC');
+        console.log(`✅ ${whiskys.length} Whiskys geladen`);
         res.json(whiskys);
     } catch (error) {
-        console.error('❌ Admin Whiskys Fehler:', error);
-        res.status(500).json({ error: 'Fehler beim Laden der Whiskys' });
+        console.error('❌ Fehler beim Laden der Whiskys:', error);
+        res.status(500).json({ error: 'Fehler beim Laden der Whiskys aus der Datenbank' });
     }
 });
 
-// POST /api/admin/whiskys - Neuen Whisky hinzufügen
-router.post('/whiskys', adminAuth, async (req, res) => {
+// Whisky hinzufügen (geschützt + Bild-Upload)
+router.post("/whiskys", tokenAuth, upload.single("image"), async (req, res) => {
     try {
-        const { name, image_path } = req.body;
-
-        if (!name) {
-            return res.status(400).json({ error: 'Whisky-Name ist erforderlich' });
+        const { name } = req.body;
+        if (!name || !name.trim()) {
+            return res.status(400).json({ error: "Name erforderlich" });
         }
 
-        const result = await runQuery(
+        const fs = require('fs');
+        let finalImagePath = null;
+
+        if (req.file) {
+            // Whisky-Name für Dateinamen bereinigen (Sonderzeichen entfernen)
+            const safeName = name.trim()
+                .toLowerCase()
+                .replace(/[^a-z0-9]/g, '_') // Alle nicht-alphanumerischen Zeichen durch _ ersetzen
+                .replace(/_+/g, '_') // Mehrfache _ durch einzelne ersetzen
+                .replace(/^_|_$/g, ''); // _ am Anfang/Ende entfernen
+
+            const fileExtension = path.extname(req.file.originalname);
+            const newFileName = `${safeName}${fileExtension}`;
+            const tempPath = req.file.path;
+            const finalPath = path.join(path.dirname(tempPath), newFileName);
+
+            try {
+                // Datei von temporärem Namen zum gewünschten Namen verschieben
+                fs.renameSync(tempPath, finalPath);
+                finalImagePath = newFileName; // Nur Dateiname, ohne /images/
+                console.log(`📸 Bild umbenannt: ${req.file.filename} → ${newFileName}`);
+            } catch (renameError) {
+                console.error('❌ Fehler beim Umbenennen der Datei:', renameError);
+                // Falls Umbenennen fehlschlägt, verwende temporären Namen
+                finalImagePath = req.file.filename;
+            }
+        }
+
+        console.log(`📝 Füge Whisky hinzu: "${name}"${finalImagePath ? ` (Bild: ${finalImagePath})` : ''}`);
+
+        // Whisky in Datenbank einfügen
+        const result = await database.runQuery(
             'INSERT INTO whiskys (name, image_path) VALUES (?, ?)',
-            [name, image_path || null]
+            [name.trim(), finalImagePath] // Nur Dateiname ohne /images/
         );
 
-        res.json({
-            success: true,
-            message: 'Whisky hinzugefügt',
-            whisky: { id: result.id, name, image_path }
-        });
-    } catch (error) {
-        console.error('❌ Admin Add Whisky Fehler:', error);
-        res.status(500).json({ error: 'Fehler beim Hinzufügen des Whiskys' });
-    }
-});
-
-// PUT /api/admin/whiskys/:id - Whisky bearbeiten
-router.put('/whiskys/:id', adminAuth, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { name, image_path } = req.body;
-
-        if (!name) {
-            return res.status(400).json({ error: 'Whisky-Name ist erforderlich' });
-        }
-
-        const result = await runQuery(
-            'UPDATE whiskys SET name = ?, image_path = ? WHERE id = ?',
-            [name, image_path, id]
-        );
-
-        if (result.changes === 0) {
-            return res.status(404).json({ error: 'Whisky nicht gefunden' });
-        }
-
-        res.json({
-            success: true,
-            message: 'Whisky aktualisiert',
-            whisky: { id, name, image_path }
-        });
-    } catch (error) {
-        console.error('❌ Admin Update Whisky Fehler:', error);
-        res.status(500).json({ error: 'Fehler beim Aktualisieren des Whiskys' });
-    }
-});
-
-// DELETE /api/admin/whiskys/:id - Whisky löschen
-router.delete('/whiskys/:id', adminAuth, async (req, res) => {
-    try {
-        const { id } = req.params;
-
-        // Erst prüfen ob Umfragen existieren
-        const responses = await allQuery('SELECT COUNT(*) as count FROM survey_responses WHERE whisky_id = ?', [id]);
-
-        if (responses[0].count > 0) {
-            return res.status(400).json({
-                error: `Kann Whisky nicht löschen: ${responses[0].count} Umfrage(n) vorhanden`,
-                survey_count: responses[0].count
-            });
-        }
-
-        const result = await runQuery('DELETE FROM whiskys WHERE id = ?', [id]);
-
-        if (result.changes === 0) {
-            return res.status(404).json({ error: 'Whisky nicht gefunden' });
-        }
-
-        res.json({
-            success: true,
-            message: 'Whisky gelöscht'
-        });
-    } catch (error) {
-        console.error('❌ Admin Delete Whisky Fehler:', error);
-        res.status(500).json({ error: 'Fehler beim Löschen des Whiskys' });
-    }
-});
-
-// =============================================================================
-// USER MANAGEMENT
-// =============================================================================
-
-// GET /api/admin/users - Alle Benutzer
-router.get('/users', adminAuth, async (req, res) => {
-    try {
-        const users = await allQuery(`
-            SELECT 
-                u.*,
-                COUNT(sr.id) as survey_count,
-                MAX(sr.submitted_at) as last_survey
-            FROM users u
-            LEFT JOIN survey_responses sr ON u.id = sr.user_id
-            GROUP BY u.id
-            ORDER BY u.created_at DESC
-        `);
-
-        res.json(users);
-    } catch (error) {
-        console.error('❌ Admin Users Fehler:', error);
-        res.status(500).json({ error: 'Fehler beim Laden der Benutzer' });
-    }
-});
-
-// =============================================================================
-// SURVEY MANAGEMENT
-// =============================================================================
-
-// GET /api/admin/surveys - Alle Umfragen
-router.get('/surveys', adminAuth, async (req, res) => {
-    try {
-        const surveys = await allQuery(`
-            SELECT 
-                sr.*,
-                u.name as user_name,
-                w.name as whisky_name
-            FROM survey_responses sr
-            JOIN users u ON sr.user_id = u.id
-            JOIN whiskys w ON sr.whisky_id = w.id
-            ORDER BY sr.submitted_at DESC
-        `);
-
-        // JSON Strings konvertieren
-        const formattedSurveys = surveys.map(survey => ({
-            ...survey,
-            geruch: survey.geruch ? JSON.parse(survey.geruch) : [],
-            geschmack: survey.geschmack ? JSON.parse(survey.geschmack) : []
-        }));
-
-        res.json(formattedSurveys);
-    } catch (error) {
-        console.error('❌ Admin Surveys Fehler:', error);
-        res.status(500).json({ error: 'Fehler beim Laden der Umfragen' });
-    }
-});
-
-// DELETE /api/admin/surveys/:id - Umfrage löschen
-router.delete('/surveys/:id', adminAuth, async (req, res) => {
-    try {
-        const { id } = req.params;
-
-        const result = await runQuery('DELETE FROM survey_responses WHERE id = ?', [id]);
-
-        if (result.changes === 0) {
-            return res.status(404).json({ error: 'Umfrage nicht gefunden' });
-        }
-
-        res.json({
-            success: true,
-            message: 'Umfrage gelöscht'
-        });
-    } catch (error) {
-        console.error('❌ Admin Delete Survey Fehler:', error);
-        res.status(500).json({ error: 'Fehler beim Löschen der Umfrage' });
-    }
-});
-
-// =============================================================================
-// DATABASE STATS
-// =============================================================================
-
-// GET /api/admin/stats - Datenbank-Statistiken
-router.get('/stats', adminAuth, async (req, res) => {
-    try {
-        const stats = {
-            whiskys: await getQuery('SELECT COUNT(*) as count FROM whiskys'),
-            users: await getQuery('SELECT COUNT(*) as count FROM users'),
-            surveys: await getQuery('SELECT COUNT(*) as count FROM survey_responses'),
-            avgRating: await getQuery('SELECT AVG(bewertung) as avg FROM survey_responses'),
-            lastSurvey: await getQuery('SELECT MAX(submitted_at) as last FROM survey_responses')
+        const newWhisky = {
+            id: result.id,
+            name: name.trim(),
+            image_path: finalImagePath
         };
 
-        res.json({
-            whisky_count: stats.whiskys.count,
-            user_count: stats.users.count,
-            survey_count: stats.surveys.count,
-            average_rating: Math.round((stats.avgRating.avg || 0) * 10) / 10,
-            last_survey: stats.lastSurvey.last
-        });
+        console.log(`✅ Whisky hinzugefügt mit ID: ${result.id}`);
+        res.json({ success: true, whisky: newWhisky });
+
     } catch (error) {
-        console.error('❌ Admin Stats Fehler:', error);
-        res.status(500).json({ error: 'Fehler beim Laden der Statistiken' });
+        console.error('❌ Fehler beim Hinzufügen des Whiskys:', error);
+        res.status(500).json({
+            error: 'Fehler beim Hinzufügen des Whiskys zur Datenbank',
+            message: error.message
+        });
     }
 });
+
+// Whisky löschen (geschützt)
+router.delete("/whiskys/:id", tokenAuth, async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+
+        if (isNaN(id)) {
+            return res.status(400).json({ error: "Ungültige ID" });
+        }
+
+        console.log(`🗑️ Lösche Whisky mit ID: ${id}`);
+
+        // Prüfen ob Whisky existiert
+        const existingWhisky = await database.getQuery('SELECT * FROM whiskys WHERE id = ?', [id]);
+        if (!existingWhisky) {
+            return res.status(404).json({ error: "Whisky nicht gefunden" });
+        }
+
+        // Whisky löschen
+        const result = await database.runQuery('DELETE FROM whiskys WHERE id = ?', [id]);
+
+        if (result.changes === 0) {
+            return res.status(404).json({ error: "Whisky nicht gefunden" });
+        }
+
+        console.log(`✅ Whisky "${existingWhisky.name}" gelöscht`);
+        res.json({ success: true, message: 'Whisky erfolgreich gelöscht' });
+
+    } catch (error) {
+        console.error('❌ Fehler beim Löschen des Whiskys:', error);
+        res.status(500).json({
+            error: 'Fehler beim Löschen des Whiskys aus der Datenbank',
+            message: error.message
+        });
+    }
+});
+
+// Token-Cleanup (optional - entfernt alte Tokens)
+router.post("/logout", tokenAuth, (req, res) => {
+    const token = req.headers["authorization"];
+    validTokens = validTokens.filter(t => t !== token);
+    console.log("👋 Admin Logout");
+    res.json({ success: true, message: "Logout erfolgreich" });
+});
+
+// Debug: Alle aktuellen Tokens anzeigen (nur in Development)
+if (process.env.NODE_ENV === 'development') {
+    router.get("/debug/tokens", (req, res) => {
+        res.json({
+            tokenCount: validTokens.length,
+            tokens: validTokens.map(t => t.substring(0, 8) + '...')
+        });
+    });
+}
 
 module.exports = router;

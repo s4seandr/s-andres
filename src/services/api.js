@@ -87,19 +87,64 @@ export const surveyAPI = {
 // =============================================================================
 
 export const analyticsAPI = {
-    // Statistiken für einen bestimmten Whisky
-    getWhiskyStats: async (whiskyId) => {
-        return apiCall(`/analytics/whisky/${whiskyId}`);
+    // Top bewertete Whiskys
+    getTopWhiskys: async () => {
+        try {
+            return await apiCall('/analytics/top-whiskys');
+        } catch (error) {
+            console.error('❌ getTopWhiskys failed:', error);
+            throw new Error(`Fehler beim Laden der Top Whiskys: ${error.message}`);
+        }
     },
 
-    // Überblick über alle Statistiken
-    getAllStats: async () => {
-        return apiCall('/analytics/overview');
+    // Geruch-Analyse
+    getGeruch: async () => {
+        try {
+            return await apiCall('/analytics/geruch');
+        } catch (error) {
+            console.error('❌ getGeruch failed:', error);
+            throw new Error(`Fehler beim Laden der Geruch-Daten: ${error.message}`);
+        }
     },
 
-    // Whisky-Rangliste
-    getRanking: async () => {
-        return apiCall('/analytics/ranking');
+    // Geschmack-Analyse
+    getGeschmack: async () => {
+        try {
+            return await apiCall('/analytics/geschmack');
+        } catch (error) {
+            console.error('❌ getGeschmack failed:', error);
+            throw new Error(`Fehler beim Laden der Geschmack-Daten: ${error.message}`);
+        }
+    },
+
+    // Bewertungs-Analyse
+    getBewertungen: async () => {
+        try {
+            return await apiCall('/analytics/bewertungen');
+        } catch (error) {
+            console.error('❌ getBewertungen failed:', error);
+            throw new Error(`Fehler beim Laden der Bewertungs-Daten: ${error.message}`);
+        }
+    },
+
+    // Matrix-Daten
+    getMatrix: async () => {
+        try {
+            return await apiCall('/analytics/matrix');
+        } catch (error) {
+            console.error('❌ getMatrix failed:', error);
+            throw new Error(`Fehler beim Laden der Matrix-Daten: ${error.message}`);
+        }
+    },
+
+    // Summary-Statistiken
+    getSummary: async () => {
+        try {
+            return await apiCall('/analytics/summary');
+        } catch (error) {
+            console.error('❌ getSummary failed:', error);
+            throw new Error(`Fehler beim Laden der Summary-Daten: ${error.message}`);
+        }
     }
 };
 
@@ -192,3 +237,4 @@ export const checkBackendHealth = async () => {
         return false;
     }
 };
+

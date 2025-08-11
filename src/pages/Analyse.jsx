@@ -1,67 +1,173 @@
-import { useState, useEffect } from 'react';
-import { analyticsAPI } from '../services/api';
-import { useAPI } from '../hooks/useAPI';
+import React, { useState, useEffect } from "react";
+import {
+    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+    PieChart, Pie, Cell
+} from "recharts";
+import { analyticsAPI, surveyAPI } from "../services/api";
+import WhiskyClusterMatrix from "../components/WhiskyClusterMatrix";
+
+const COLORS = ["#8884d8", "#82ca9d", "#ffc658", "#ff7f50", "#8dd1e1"];
 
 export default function Analyse() {
-    const [selectedWhisky, setSelectedWhisky] = useState(null);
+    // State für Backend-Daten
+    const [geruchData, setGeruchData] = useState([]);
+    const [geschmackData, setGeschmackData] = useState([]);
+    const [bewertungData, setBewertungData] = useState([]);
+    const [matrixData, setMatrixData] = useState(null);
+    const [summaryData, setSummaryData] = useState(null);
+    const [topWhiskys, setTopWhiskys] = useState([]);
 
-    // Alle Analytics Daten laden
-    const {
-        data: overviewData,
-        loading: overviewLoading,
-        error: overviewError,
-        refetch: refetchOverview
-    } = useAPI(() => analyticsAPI.getAllStats());
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
 
-    const {
-        data: rankingData,
-        loading: rankingLoading,
-        error: rankingError
-    } = useAPI(() => analyticsAPI.getRanking());
-
-    // Whisky-spezifische Stats laden
-    const [whiskyStats, setWhiskyStats] = useState(null);
-    const [whiskyStatsLoading, setWhiskyStatsLoading] = useState(false);
-
-    const loadWhiskyStats = async (whiskyId) => {
-        setWhiskyStatsLoading(true);
-        try {
-            const stats = await analyticsAPI.getWhiskyStats(whiskyId);
-            setWhiskyStats(stats);
-        } catch (error) {
-            console.error('Fehler beim Laden der Whisky-Stats:', error);
-        }
-        setWhiskyStatsLoading(false);
-    };
+    // Dark Mode Detection mit CSS Custom Properties
+    const [isDark, setIsDark] = useState(false);
 
     useEffect(() => {
-        if (selectedWhisky) {
-            loadWhiskyStats(selectedWhisky.id);
-        }
-    }, [selectedWhisky]);
+        const checkDarkMode = () => {
+            const isDarkMode = document.documentElement.classList.contains('dark');
+            setIsDark(isDarkMode);
+        };
 
-    const handleWhiskySelect = (whisky) => {
-        setSelectedWhisky(whisky);
+        checkDarkMode();
+
+        // Observer für Dark Mode Changes
+        const observer = new MutationObserver(checkDarkMode);
+        observer.observe(document.documentElement, {
+            attributes: true,
+            attributeFilter: ['class']
+        });
+
+        return () => observer.disconnect();
+    }, []);
+
+    // Dynamische Chart-Farben basierend auf CSS Custom Properties
+    const getChartTheme = () => {
+        const computedStyle = getComputedStyle(document.documentElement);
+
+        return {
+            textColor: isDark ? '#f9fafb' : '#1f2937',
+            gridColor: isDark ? '#374151' : '#e5e7eb',
+            axisColor: isDark ? '#6b7280' : '#4b5563',
+            tooltipBg: isDark ? '#374151' : '#ffffff',
+            tooltipBorder: isDark ? '#4b5563' : '#d1d5db'
+        };
     };
 
-    if (overviewLoading || rankingLoading) {
+    const chartTheme = getChartTheme();
+
+    // Hilfsfunktion für Bild-URLs
+    const getImageUrl = (imagePath) => {
+        if (!imagePath) return null;
+        if (imagePath.startsWith('http')) return imagePath;
+
+        const baseUrl = import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:3001';
+        return `${baseUrl}/images/${imagePath}`;
+    };
+
+    // Top 3 Whiskys berechnen
+    const calculateTopWhiskys = async () => {
+        try {
+            const topWhiskysData = await analyticsAPI.getTopWhiskys();
+            const top3 = topWhiskysData.slice(0, 3).map(whisky => ({
+                ...whisky,
+                imageUrl: getImageUrl(whisky.image_path)
+            }));
+            setTopWhiskys(top3);
+        } catch (error) {
+            console.error('❌ Fehler beim Laden der Top Whiskys:', error);
+            try {
+                const allWhiskys = await surveyAPI.getWhiskys();
+                const fallbackTop3 = allWhiskys.slice(0, 3).map((whisky, index) => ({
+                    rank: index + 1,
+                    ...whisky,
+                    averageRating: 0,
+                    totalReviews: 0,
+                    imageUrl: getImageUrl(whisky.image_path)
+                }));
+                setTopWhiskys(fallbackTop3);
+            } catch (fallbackError) {
+                console.error('❌ Auch Fallback fehlgeschlagen:', fallbackError);
+            }
+        }
+    };
+
+    // Alle Daten laden
+    const loadAnalyticsData = async () => {
+        setLoading(true);
+        setError(null);
+
+        try {
+            const [geruch, geschmack, bewertungen, matrix, summary] = await Promise.all([
+                analyticsAPI.getGeruch(),
+                analyticsAPI.getGeschmack(),
+                analyticsAPI.getBewertungen(),
+                analyticsAPI.getMatrix(),
+                analyticsAPI.getSummary()
+            ]);
+
+            setGeruchData(geruch);
+            setGeschmackData(geschmack);
+            setBewertungData(bewertungen);
+            setMatrixData(matrix);
+            setSummaryData(summary);
+
+            await calculateTopWhiskys();
+
+            console.log('✅ Analytics-Daten geladen');
+        } catch (error) {
+            console.error('❌ Fehler beim Laden der Analytics:', error);
+            setError('Fehler beim Laden der Analysedaten: ' + error.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Daten beim Mount laden
+    useEffect(() => {
+        loadAnalyticsData();
+    }, []);
+
+    // Custom Tooltip für Dark Mode
+    const CustomTooltip = ({ active, payload, label }) => {
+        if (active && payload && payload.length) {
+            return (
+                <div
+                    className="rounded-lg border border-border p-3 shadow-lg bg-card text-card-foreground"
+                >
+                    <p className="font-medium">{label}</p>
+                    {payload.map((entry, index) => (
+                        <p key={index} style={{ color: entry.color }}>
+                            {`${entry.name}: ${entry.value}`}
+                        </p>
+                    ))}
+                </div>
+            );
+        }
+        return null;
+    };
+
+    // Loading State
+    if (loading) {
         return (
-            <div className="m-6 text-center">
-                <div className="text-lg mb-2">📊</div>
-                <p>Lade Analytics-Daten...</p>
+            <div className="flex min-h-screen items-center justify-center">
+                <div className="text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+                    <p className="text-muted-foreground">Lade Analysedaten...</p>
+                </div>
             </div>
         );
     }
 
-    if (overviewError) {
+    // Error State
+    if (error) {
         return (
-            <div className="m-6">
-                <div className="bg-red-50 border border-red-200 rounded p-4">
-                    <h2 className="text-lg font-semibold text-red-800 mb-2">Fehler beim Laden der Daten</h2>
-                    <p className="text-red-700">{overviewError}</p>
+            <div className="min-h-screen flex items-center justify-center">
+                <div className="text-center max-w-md">
+                    <p className="text-destructive mb-4">❌ {error}</p>
                     <button
-                        onClick={refetchOverview}
-                        className="mt-3 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+                        onClick={loadAnalyticsData}
+                        className="rounded bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
                     >
                         Erneut versuchen
                     </button>
@@ -71,204 +177,200 @@ export default function Analyse() {
     }
 
     return (
-        <div className="m-6">
-            <h1 className="text-2xl font-bold mb-6">📊 Whisky Analytics</h1>
+        <div className="p-6">
+            <h1 className="text-3xl font-bold mb-8 text-center text-foreground">🥃 Whisky Umfrage Analyse</h1>
 
-            {/* Übersicht */}
-            {overviewData && (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                    <div className="bg-card rounded-lg border border-border p-4">
-                        <h3 className="font-semibold text-muted-foreground mb-2">Gesamt Bewertungen</h3>
-                        <p className="text-2xl font-bold text-primary">{overviewData.total_surveys}</p>
+            {/* Summary Cards - bereits dark mode ready */}
+            {summaryData && (
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+                    <div className="bg-card p-4 rounded-lg shadow text-center border border-border">
+                        <h3 className="text-2xl font-bold text-primary">{summaryData.totalSurveys}</h3>
+                        <p className="text-sm text-muted-foreground">Gesamte Bewertungen</p>
                     </div>
-                    <div className="bg-card rounded-lg border border-border p-4">
-                        <h3 className="font-semibold text-muted-foreground mb-2">Aktive Benutzer</h3>
-                        <p className="text-2xl font-bold text-primary">{overviewData.total_users}</p>
+                    <div className="bg-card p-4 rounded-lg shadow text-center border border-border">
+                        <h3 className="text-2xl font-bold text-primary">{summaryData.totalUsers}</h3>
+                        <p className="text-sm text-muted-foreground">Teilnehmer</p>
                     </div>
-                    <div className="bg-card rounded-lg border border-border p-4">
-                        <h3 className="font-semibold text-muted-foreground mb-2">Verfügbare Whiskys</h3>
-                        <p className="text-2xl font-bold text-primary">{overviewData.total_whiskys}</p>
+                    <div className="bg-card p-4 rounded-lg shadow text-center border border-border">
+                        <h3 className="text-2xl font-bold text-primary">{summaryData.averageRating}⭐</h3>
+                        <p className="text-sm text-muted-foreground">Ø Bewertung</p>
                     </div>
-                    <div className="bg-card rounded-lg border border-border p-4">
-                        <h3 className="font-semibold text-muted-foreground mb-2">⌀ Bewertung</h3>
-                        <p className="text-2xl font-bold text-primary">
-                            {overviewData.avg_rating ? `${overviewData.avg_rating}/10` : 'N/A'}
-                        </p>
+                    <div className="bg-card p-4 rounded-lg shadow text-center border border-border">
+                        <h3 className="text-2xl font-bold text-primary">{summaryData.popularWhisky?.count || 0}</h3>
+                        <p className="text-sm text-muted-foreground">Meiste Bewertungen</p>
                     </div>
                 </div>
             )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {/* Whisky Rangliste */}
-                <div className="bg-card rounded-lg border border-border p-6">
-                    <h2 className="text-xl font-semibold mb-4">🏆 Whisky Rangliste</h2>
+            {/* Top 3 Whiskys - bereits dark mode ready */}
+            <div className="mb-12 bg-card p-6 rounded-lg shadow border border-border">
+                <h2 className="text-2xl font-bold mb-6 text-center text-card-foreground">🏆 Top 3 Whiskys</h2>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {topWhiskys.map((whisky, index) => (
+                        <div
+                            key={whisky.id}
+                            className={`relative bg-gradient-to-br p-6 rounded-xl shadow-lg text-white text-center ${
+                                index === 0 ? 'from-yellow-400 to-yellow-600' :
+                                    index === 1 ? 'from-gray-300 to-gray-500' :
+                                        'from-orange-400 to-orange-600'
+                            }`}
+                        >
+                            <div className={`absolute -top-3 -right-3 w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg ${
+                                index === 0 ? 'bg-yellow-500 text-yellow-900' :
+                                    index === 1 ? 'bg-gray-400 text-gray-900' :
+                                        'bg-orange-500 text-orange-900'
+                            }`}>
+                                {whisky.rank}
+                            </div>
 
-                    {rankingLoading && <p>Lade Rangliste...</p>}
-                    {rankingError && <p className="text-red-600">Fehler: {rankingError}</p>}
-
-                    {rankingData && rankingData.length > 0 ? (
-                        <div className="space-y-3">
-                            {rankingData.map((whisky, index) => (
-                                <div
-                                    key={whisky.id}
-                                    onClick={() => handleWhiskySelect(whisky)}
-                                    className="flex items-center justify-between p-3 rounded border border-border hover:bg-secondary cursor-pointer transition-colors"
-                                >
-                                    <div className="flex items-center space-x-3">
-                                        <span className={`text-lg font-bold ${
-                                            index === 0 ? 'text-yellow-500' :
-                                                index === 1 ? 'text-gray-400' :
-                                                    index === 2 ? 'text-amber-600' :
-                                                        'text-muted-foreground'
-                                        }`}>
-                                            {index + 1}.
-                                        </span>
-                                        <div>
-                                            <p className="font-medium">{whisky.name}</p>
-                                            <p className="text-sm text-muted-foreground">
-                                                {whisky.survey_count} Bewertung{whisky.survey_count !== 1 ? 'en' : ''}
-                                            </p>
-                                        </div>
-                                    </div>
-                                    <div className="text-right">
-                                        <p className="font-bold text-primary">
-                                            {whisky.avg_rating}/10
-                                        </p>
-                                        <p className="text-xs text-muted-foreground">
-                                            ⭐ {whisky.avg_rating}
-                                        </p>
-                                    </div>
+                            <div className="mb-4">
+                                {whisky.image_path ? (
+                                    <img
+                                        src={whisky.imageUrl}
+                                        alt={whisky.name}
+                                        className="w-24 h-32 mx-auto rounded-lg object-cover shadow-md"
+                                        onError={(e) => {
+                                            e.target.style.display = 'none';
+                                            e.target.nextSibling.style.display = 'flex';
+                                        }}
+                                    />
+                                ) : null}
+                                <div className={`w-24 h-32 mx-auto rounded-lg bg-white/20 flex items-center justify-center ${whisky.image_path ? 'hidden' : ''}`}>
+                                    <span className="text-4xl">🥃</span>
                                 </div>
-                            ))}
-                        </div>
-                    ) : (
-                        <p className="text-muted-foreground">Noch keine Bewertungen vorhanden.</p>
-                    )}
-                </div>
+                            </div>
 
-                {/* Whisky Details */}
-                <div className="bg-card rounded-lg border border-border p-6">
-                    <h2 className="text-xl font-semibold mb-4">🔍 Whisky Details</h2>
+                            <h3 className="text-lg font-bold mb-2">{whisky.name}</h3>
+                            <div className="space-y-1 text-sm">
+                                <p className="flex items-center justify-center gap-1">
+                                    <span className="text-yellow-300">⭐</span>
+                                    {whisky.averageRating.toFixed(1)} / 5
+                                </p>
+                                <p className="text-white/90">
+                                    {whisky.totalReviews} Bewertungen
+                                </p>
+                            </div>
 
-                    {!selectedWhisky && (
-                        <p className="text-muted-foreground">
-                            Wähle einen Whisky aus der Rangliste, um Details zu sehen.
-                        </p>
-                    )}
-
-                    {selectedWhisky && (
-                        <div>
-                            <h3 className="text-lg font-semibold mb-3">{selectedWhisky.name}</h3>
-
-                            {whiskyStatsLoading && <p>Lade Details...</p>}
-
-                            {whiskyStats && (
-                                <div className="space-y-4">
-                                    {/* Basis Stats */}
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="text-center p-3 bg-background rounded">
-                                            <p className="text-2xl font-bold text-primary">
-                                                {whiskyStats.avg_rating}/10
-                                            </p>
-                                            <p className="text-sm text-muted-foreground">Durchschnitt</p>
-                                        </div>
-                                        <div className="text-center p-3 bg-background rounded">
-                                            <p className="text-2xl font-bold text-primary">
-                                                {whiskyStats.survey_count}
-                                            </p>
-                                            <p className="text-sm text-muted-foreground">Bewertungen</p>
-                                        </div>
-                                    </div>
-
-                                    {/* Geruch Analyse */}
-                                    {whiskyStats.geruch_stats && whiskyStats.geruch_stats.length > 0 && (
-                                        <div>
-                                            <h4 className="font-semibold mb-2">👃 Häufigste Gerüche</h4>
-                                            <div className="space-y-2">
-                                                {whiskyStats.geruch_stats.slice(0, 5).map((item, index) => (
-                                                    <div key={index} className="flex justify-between items-center">
-                                                        <span className="text-sm">{item.geruch}</span>
-                                                        <div className="flex items-center space-x-2">
-                                                            <div className="w-20 h-2 bg-secondary rounded-full">
-                                                                <div
-                                                                    className="h-full bg-primary rounded-full"
-                                                                    style={{
-                                                                        width: `${(item.count / whiskyStats.survey_count) * 100}%`
-                                                                    }}
-                                                                />
-                                                            </div>
-                                                            <span className="text-xs text-muted-foreground w-8">
-                                                                {item.count}
-                                                            </span>
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* Geschmack Analyse */}
-                                    {whiskyStats.geschmack_stats && whiskyStats.geschmack_stats.length > 0 && (
-                                        <div>
-                                            <h4 className="font-semibold mb-2">👅 Häufigste Geschmäcker</h4>
-                                            <div className="space-y-2">
-                                                {whiskyStats.geschmack_stats.slice(0, 5).map((item, index) => (
-                                                    <div key={index} className="flex justify-between items-center">
-                                                        <span className="text-sm">{item.geschmack}</span>
-                                                        <div className="flex items-center space-x-2">
-                                                            <div className="w-20 h-2 bg-secondary rounded-full">
-                                                                <div
-                                                                    className="h-full bg-primary rounded-full"
-                                                                    style={{
-                                                                        width: `${(item.count / whiskyStats.survey_count) * 100}%`
-                                                                    }}
-                                                                />
-                                                            </div>
-                                                            <span className="text-xs text-muted-foreground w-8">
-                                                                {item.count}
-                                                            </span>
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* Bewertungsverteilung */}
-                                    {whiskyStats.rating_distribution && (
-                                        <div>
-                                            <h4 className="font-semibold mb-2">📊 Bewertungsverteilung</h4>
-                                            <div className="space-y-1">
-                                                {[10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map(rating => {
-                                                    const count = whiskyStats.rating_distribution[rating] || 0;
-                                                    const percentage = whiskyStats.survey_count > 0
-                                                        ? (count / whiskyStats.survey_count) * 100
-                                                        : 0;
-
-                                                    return (
-                                                        <div key={rating} className="flex items-center space-x-2 text-sm">
-                                                            <span className="w-6">{rating}</span>
-                                                            <div className="flex-1 h-2 bg-secondary rounded-full">
-                                                                <div
-                                                                    className="h-full bg-primary rounded-full transition-all"
-                                                                    style={{ width: `${percentage}%` }}
-                                                                />
-                                                            </div>
-                                                            <span className="w-8 text-xs text-muted-foreground">
-                                                                {count}
-                                                            </span>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-                                    )}
+                            {index === 0 && (
+                                <div className="absolute -bottom-2 left-1/2 transform -translate-x-1/2">
+                                    <span className="text-3xl">🏆</span>
                                 </div>
                             )}
                         </div>
-                    )}
+                    ))}
                 </div>
             </div>
+
+            {/* Geruch Analyse - mit Dark Mode Support */}
+            <div className="mb-12 bg-card p-6 rounded-lg shadow border border-border">
+                <h2 className="text-xl font-bold mb-4 text-card-foreground">👃 Geruch Analyse</h2>
+                <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={geruchData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.gridColor} />
+                        <XAxis
+                            dataKey="name"
+                            tick={{ fill: chartTheme.textColor, fontSize: 12 }}
+                            axisLine={{ stroke: chartTheme.axisColor }}
+                            tickLine={{ stroke: chartTheme.axisColor }}
+                        />
+                        <YAxis
+                            tick={{ fill: chartTheme.textColor, fontSize: 12 }}
+                            axisLine={{ stroke: chartTheme.axisColor }}
+                            tickLine={{ stroke: chartTheme.axisColor }}
+                        />
+                        <Tooltip content={<CustomTooltip />} />
+                        <Legend
+                            wrapperStyle={{
+                                color: chartTheme.textColor,
+                                paddingTop: '20px'
+                            }}
+                        />
+                        <Bar dataKey="votes" fill="#8884d8" />
+                    </BarChart>
+                </ResponsiveContainer>
+            </div>
+
+            {/* Geschmack Analyse - mit Dark Mode Support */}
+            <div className="mb-12 bg-card p-6 rounded-lg shadow border border-border">
+                <h2 className="text-xl font-bold mb-4 text-card-foreground">👅 Geschmack Analyse</h2>
+                <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={geschmackData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.gridColor} />
+                        <XAxis
+                            dataKey="name"
+                            tick={{ fill: chartTheme.textColor, fontSize: 12 }}
+                            axisLine={{ stroke: chartTheme.axisColor }}
+                            tickLine={{ stroke: chartTheme.axisColor }}
+                        />
+                        <YAxis
+                            tick={{ fill: chartTheme.textColor, fontSize: 12 }}
+                            axisLine={{ stroke: chartTheme.axisColor }}
+                            tickLine={{ stroke: chartTheme.axisColor }}
+                        />
+                        <Tooltip content={<CustomTooltip />} />
+                        <Legend
+                            wrapperStyle={{
+                                color: chartTheme.textColor,
+                                paddingTop: '20px'
+                            }}
+                        />
+                        <Bar dataKey="votes" fill="#82ca9d" />
+                    </BarChart>
+                </ResponsiveContainer>
+            </div>
+
+            {/* Bewertungs Verteilung - mit Dark Mode Support */}
+            <div className="bg-card p-6 rounded-lg shadow mb-12 border border-border">
+                <h2 className="text-xl font-bold mb-4 text-card-foreground">⭐ Bewertungsverteilung</h2>
+                <ResponsiveContainer width="100%" height={350}>
+                    <PieChart>
+                        <Pie
+                            data={bewertungData}
+                            cx="50%"
+                            cy="50%"
+                            labelLine={false}
+                            outerRadius={120}
+                            fill="#8884d8"
+                            dataKey="value"
+                            label={({ name, percent }) =>
+                                `${name} ${(percent * 100).toFixed(0)}%`
+                            }
+                            labelStyle={{
+                                fill: chartTheme.textColor,
+                                fontSize: 14,
+                                fontWeight: 500
+                            }}
+                        >
+                            {bewertungData.map((_, index) => (
+                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                            ))}
+                        </Pie>
+                        <Tooltip content={<CustomTooltip />} />
+                    </PieChart>
+                </ResponsiveContainer>
+            </div>
+
+            {/* Cluster Matrix */}
+            {matrixData && (
+                <div className="mb-8">
+                    <WhiskyClusterMatrix
+                        whiskys={matrixData.whiskys}
+                        responses={matrixData.responses}
+                    />
+                </div>
+            )}
+
+            {/* Keine Daten Meldung */}
+            {geruchData.length === 0 && geschmackData.length === 0 && (
+                <div className="text-center py-12">
+                    <p className="text-muted-foreground text-lg">
+                        📊 Noch keine Umfragedaten verfügbar.
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-2">
+                        Die Analyse wird angezeigt, sobald Bewertungen eingegangen sind.
+                    </p>
+                </div>
+            )}
         </div>
     );
 }

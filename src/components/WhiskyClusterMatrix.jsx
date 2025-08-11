@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 
 /**
  * props:
@@ -8,6 +8,26 @@ import React, { useMemo } from "react";
  */
 
 export default function WhiskyClusterMatrix({ whiskys, responses: propResponses }) {
+    // Dark Mode Detection
+    const [isDark, setIsDark] = useState(false);
+
+    useEffect(() => {
+        const checkDarkMode = () => {
+            setIsDark(document.documentElement.classList.contains('dark'));
+        };
+
+        checkDarkMode();
+
+        // Observer für Dark Mode Changes
+        const observer = new MutationObserver(checkDarkMode);
+        observer.observe(document.documentElement, {
+            attributes: true,
+            attributeFilter: ['class']
+        });
+
+        return () => observer.disconnect();
+    }, []);
+
     // fallback sample responses if nothing in prop or localStorage
     const sampleResponses = [
         { user: "Anna", whiskyId: 1, geruch: ["Fruchtig"], geschmack: ["Süß"], bewertung: 4 },
@@ -72,21 +92,41 @@ export default function WhiskyClusterMatrix({ whiskys, responses: propResponses 
         );
     }, [whiskys, featureSets]);
 
-    // Color helper: return rgba using primary blue with alpha = similarity
+    // Color helper: return rgba using primary color with alpha = similarity
+    // Angepasst für Dark Mode
     const getCellStyle = (sim) => {
-        // use a blue color and vary opacity; also adjust text color for contrast
         const alpha = Math.min(0.85, 0.15 + sim * 0.85);
-        const bg = `rgba(29,78,216, ${alpha})`; // Tailwind's blue-700 ~ rgb(29,78,216)
-        const textColor = sim > 0.45 ? "white" : "rgb(30,30,30)";
-        return { backgroundColor: bg, color: textColor };
+
+        if (isDark) {
+            // Dark Mode: Verwende hellere Farbe mit angepasster Deckkraft
+            const bg = `rgba(96, 165, 250, ${alpha})`; // blue-400 für Dark Mode
+            const textColor = sim > 0.45 ? "#1f2937" : "#f9fafb"; // Kontrastreiche Farben
+            return { backgroundColor: bg, color: textColor };
+        } else {
+            // Light Mode: Original Farbe
+            const bg = `rgba(29, 78, 216, ${alpha})`; // blue-700 für Light Mode
+            const textColor = sim > 0.45 ? "white" : "#1f2937";
+            return { backgroundColor: bg, color: textColor };
+        }
     };
 
     // compute max similarity for legend
     const maxSim = Math.max(...matrix.flat());
 
+    // Legend gradient angepasst für Dark Mode
+    const getLegendGradient = () => {
+        if (isDark) {
+            return "linear-gradient(90deg, rgba(55, 65, 81, 0.3), rgba(96, 165, 250, 0.85))";
+        } else {
+            return "linear-gradient(90deg, rgba(240, 240, 240, 1), rgba(29, 78, 216, 0.85))";
+        }
+    };
+
     return (
-        <div className="bg-card p-4 rounded shadow overflow-auto">
-            <h3 className="text-lg font-semibold mb-4">Clustermatrix (Whisky-Ähnlichkeit)</h3>
+        <div className="bg-card p-4 rounded-lg shadow border border-border overflow-auto">
+            <h3 className="text-lg font-semibold mb-4 text-card-foreground">
+                🔗 Clustermatrix (Whisky-Ähnlichkeit)
+            </h3>
 
             <div className="text-sm mb-3 text-muted-foreground">
                 Vergleichsmaß: <strong>Jaccard-Ähnlichkeit</strong> auf Basis von Geruch, Geschmack und Bewertung.
@@ -96,9 +136,12 @@ export default function WhiskyClusterMatrix({ whiskys, responses: propResponses 
                 <table className="border-collapse">
                     <thead>
                     <tr>
-                        <th className="p-2 border bg-gray-100 sticky top-0 z-10"></th>
+                        <th className="p-2 border border-border bg-muted/50 sticky top-0 z-10"></th>
                         {whiskys.map((w) => (
-                            <th key={w.id} className="p-2 border bg-gray-100 text-left min-w-[140px]">
+                            <th
+                                key={w.id}
+                                className="p-2 border border-border bg-muted/50 text-muted-foreground text-left min-w-[140px] font-medium"
+                            >
                                 {w.name}
                             </th>
                         ))}
@@ -107,14 +150,16 @@ export default function WhiskyClusterMatrix({ whiskys, responses: propResponses 
                     <tbody>
                     {whiskys.map((rowWhisky, i) => (
                         <tr key={rowWhisky.id}>
-                            <th className="p-2 border bg-gray-100 text-left sticky left-0">{rowWhisky.name}</th>
+                            <th className="p-2 border border-border bg-muted/50 text-muted-foreground text-left sticky left-0 font-medium">
+                                {rowWhisky.name}
+                            </th>
                             {whiskys.map((colWhisky, j) => {
                                 const sim = matrix[i][j];
                                 const style = getCellStyle(sim);
                                 return (
                                     <td
                                         key={colWhisky.id}
-                                        className="p-2 border text-center align-middle"
+                                        className="p-2 border border-border text-center align-middle font-medium"
                                         style={style}
                                         title={`${rowWhisky.name} ↔ ${colWhisky.name}: ${(sim * 100).toFixed(0)}%`}
                                     >
@@ -129,13 +174,21 @@ export default function WhiskyClusterMatrix({ whiskys, responses: propResponses 
                 </table>
             </div>
 
-            {/* simple legend */}
+            {/* Legend angepasst für Dark Mode */}
             <div className="mt-4 flex items-center gap-3 text-sm">
                 <div className="text-muted-foreground">wenig ähnlich</div>
                 <div className="flex items-center gap-2">
-                    <div className="w-40 h-3 rounded" style={{ background: "linear-gradient(90deg, rgba(240,240,240,1), rgba(29,78,216,0.85))" }} />
+                    <div
+                        className="w-40 h-3 rounded border border-border"
+                        style={{ background: getLegendGradient() }}
+                    />
                 </div>
                 <div className="ml-auto text-muted-foreground">sehr ähnlich</div>
+            </div>
+
+            {/* Zusätzliche Info über Anzahl der Vergleiche */}
+            <div className="mt-2 text-xs text-muted-foreground">
+                📊 Basiert auf {responses.length} Bewertungen von {whiskys.length} Whiskys
             </div>
         </div>
     );

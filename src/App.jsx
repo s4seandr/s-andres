@@ -4,6 +4,7 @@ import Footer from "./components/Footer";
 import Home from "./pages/Home";
 import Umfrage from "./pages/Umfrage.jsx";
 import Analyse from "@/pages/Analyse.jsx";
+import Admin from "@/pages/Admin.jsx";
 
 export default function App() {
     return (
@@ -15,6 +16,7 @@ export default function App() {
                         <Route path="/" element={<Home />} />
                         <Route path="/umfrage" element={<Umfrage />} />
                         <Route path="/analyse" element={<Analyse />} />
+                        <Route path="/admin" element={<Admin /> } />
                     </Routes>
                 </main>
                 <Footer />

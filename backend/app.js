@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 require('dotenv').config();
+const path = require('path');
 
 // Routes importieren
 const authRoutes = require('./routes/auth');
@@ -16,13 +17,23 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
-app.use(helmet());
+app.use(helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" } // Erlaubt Cross-Origin für Bilder
+}));
 app.use(cors({
     origin: process.env.FRONTEND_URL || 'http://localhost:5173', // Vite Standard Port
     credentials: true
 }));
 app.use(express.json());
-app.use(express.static('public')); // Für Whisky-Bilder
+
+// Static files middleware mit CORS-Headern für Bilder
+app.use('/images', (req, res, next) => {
+    res.header('Access-Control-Allow-Origin', process.env.FRONTEND_URL || 'http://localhost:5173');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    next();
+}, express.static(path.join(__dirname, 'public/images')));
+
+app.use(express.static('public')); // Für andere statische Dateien
 
 // Logging Middleware (Debug)
 app.use((req, res, next) => {
@@ -69,6 +80,7 @@ async function startServer() {
         app.listen(PORT, () => {
             console.log(`🥃 Whisky Backend läuft auf Port ${PORT}`);
             console.log(`🌐 Health Check: http://localhost:${PORT}/api/health`);
+            console.log(`📸 Bilder verfügbar unter: http://localhost:${PORT}/images/`);
         });
     } catch (error) {
         console.error('❌ Server Start Fehler:', error);
